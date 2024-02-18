@@ -5,46 +5,41 @@ const BASE_URL = "https://www.healthdirect.gov.au/australian-health-services"
 const data = []
 ;(async () => {
   const browser = await puppeteer.launch({
-    headless: false,
+    // headless: false,
     // devtools: true,
   })
   let currentPaginationOffset = 0
 
-  const POSTCODE = ["3000", "4000"]
+  const POSTCODE = "3000"
   const page = await browser.newPage()
   page.setDefaultTimeout(10000)
-  await page.setViewport({ width: 1800, height: 955 })
+  // await page.setViewport({ width: 1800, height: 955 })
 
-  for (const pc of POSTCODE) {
-    currentPaginationOffset = 0
-    await enterSearchCriteria(page, pc)
+  await enterSearchCriteria(page, POSTCODE)
 
-    //wait for search results to load
+  //wait for search results to load
+  await page.waitForSelector("[data-testid='search-results-heading-text']")
+
+  const totalResults = await page.$eval(
+    ".css-1i5kaso",
+    (el) => el.textContent.trim().split(" ")[0] //multiples of 10.
+  )
+
+  const baseSearchUrl = page.url()
+
+  while (currentPaginationOffset < totalResults) {
+    await page.goto(`${baseSearchUrl}?offset=${currentPaginationOffset}`)
+    //wait for header to load in the new page
     await page.waitForSelector("[data-testid='search-results-heading-text']")
 
-    const totalResults = await page.$eval(
-      ".css-1i5kaso",
-      (el) => el.textContent.trim().split(" ")[0] //multiples of 10.
-    )
+    const clinicProfiles = await page.$$eval("article a", (links) => links.map((link) => link.href))
 
-    const baseSearchUrl = page.url()
-
-    while (currentPaginationOffset < totalResults) {
-      await page.goto(`${baseSearchUrl}?offset=${currentPaginationOffset}`)
-      //wait for header to load in the new page
-      await page.waitForSelector("[data-testid='search-results-heading-text']")
-
-      const clinicProfiles = await page.$$eval("article a", (links) =>
-        links.map((link) => link.href)
-      )
-
-      //visit and collect data from each internal page
-      for (let link of clinicProfiles) {
-        await fetchClinicDetails(page, link)
-      }
-
-      currentPaginationOffset = currentPaginationOffset + 10
+    //visit and collect data from each internal page
+    for (let link of clinicProfiles) {
+      await fetchClinicDetails(page, link)
     }
+
+    currentPaginationOffset = currentPaginationOffset + 10
   }
 
   createCSV(data)
@@ -102,7 +97,9 @@ async function fetchClinicDetails(page, link) {
         data.push({ clinicName, phone, email, website, practitioner, location })
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    console.log(e)
+  }
 }
 
 async function enterSearchCriteria(page, criteria) {
@@ -136,23 +133,17 @@ function createCSV(data) {
   // Convert the data array to CSV format
   const csvContent = data
     .map(
-      ({ clinicName, phone, email, website, practitioner, location }, idx) =>
-        `${
-          idx + 1
-        },"${clinicName}","${phone}","${email}","${website}","${practitioner}","${location}"`
+      ({ clinicName, phone, email, website, practitioner, location }) =>
+        `"${clinicName}","${phone}","${email}","${website}","${practitioner}","${location}"`
     )
     .join("\n")
 
-  const csvHeader = "Index,Name,Phone,Email,Website,Practitioner, Location\n"
-  fs.writeFile(
-    `Medical Clinic Details for these Melbourne and Brisbane CBD.csv`,
-    csvHeader + csvContent,
-    (err) => {
-      if (err) {
-        console.error("Failed to write file:", err)
-      } else {
-        console.log("File has been saved.")
-      }
+  const csvHeader = "Name,Phone,Email,Website,Practitioner, Location\n"
+  fs.writeFile("output.csv", csvHeader + csvContent, (err) => {
+    if (err) {
+      console.error("Failed to write file:", err)
+    } else {
+      console.log("File has been saved.")
     }
-  )
+  })
 }
